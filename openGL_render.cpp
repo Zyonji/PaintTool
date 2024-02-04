@@ -151,11 +151,56 @@ OpenGLProgramEnd(render_program_base *Program)
 }
 
 void
+SetTexture(open_gl *OpenGL, u32 Width, u32 Height, void *Memory)
+{
+    if(OpenGL->ImageTextureHandle)
+    {
+        glDeleteTextures(1, &OpenGL->ImageTextureHandle);
+    }
+    
+    OpenGL->ImageSize = {Width, Height};
+    
+    glGenTextures(1, &OpenGL->ImageTextureHandle);
+    glBindTexture(GL_TEXTURE_2D, OpenGL->ImageTextureHandle);
+    // TODO(Zyonji): Check if GL_RGBA16 or GL_RGBA32F are more desireable internal formats.
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, Width, Height, 0, GL_BGRA, GL_UNSIGNED_BYTE, Memory);
+    glGenerateMipmap(GL_TEXTURE_2D);
+    
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+}
+
+void
 DisplayBuffer(open_gl *OpenGL)
 {
     glViewport(0, 0, OpenGL->Window.Width, OpenGL->Window.Height);
+    glClearColor(0.5, 0.5, 0.5, 1.0);
+    glClear(GL_COLOR_BUFFER_BIT);
     
-    OpenGLProgramBegin(&OpenGL->PaintCheckerProgram);
-    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-    OpenGLProgramEnd(&OpenGL->PaintCheckerProgram);
+    if(OpenGL->ImageTextureHandle)
+    {
+        r32 Ratio = (r32)OpenGL->ImageSize.Width / (r32)OpenGL->ImageSize.Height;
+        if((r32)OpenGL->Window.Width / (r32)OpenGL->Window.Height > Ratio)
+        {
+            glViewport(0, 0, (u32)(OpenGL->Window.Height * Ratio), OpenGL->Window.Height);
+        }
+        else
+        {
+            glViewport(0, 0, OpenGL->Window.Width, (u32)(OpenGL->Window.Width / Ratio));
+        }
+        
+        OpenGLProgramBegin(&OpenGL->PaintTextureProgram);
+        glBindTexture(GL_TEXTURE_2D, OpenGL->ImageTextureHandle);
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+        glBindTexture(GL_TEXTURE_2D, 0);
+        OpenGLProgramEnd(&OpenGL->PaintTextureProgram);
+    }
+    else
+    {
+        OpenGLProgramBegin(&OpenGL->PaintCheckerProgram);
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+        OpenGLProgramEnd(&OpenGL->PaintCheckerProgram);
+    }
 }

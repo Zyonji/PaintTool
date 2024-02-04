@@ -161,9 +161,114 @@ InitOpenGL(HINSTANCE Instance, HWND Window)
 }
 
 static void
-ReadImageFromFile(char *FilePath, HWND Window)
+DisplayBMP(BITMAPV5HEADER *BitmapHeader, u32 BitmapOffset, SIZE_T DataSize, HWND Window)
+{
+    u8 *Memory = (u8 *)BitmapHeader;
+    u8 *MemoryEnd = Memory + DataSize;
+    if(Memory + BitmapHeader->bV5Size >= MemoryEnd)
+    {
+        LogError("Invalid BMP header size.", "BMP Reader");
+        return;
+    }
+    
+    u8 *PaletteMemory = Memory + BitmapHeader->bV5Size;
+    if(BitmapHeader->bV5Compression == BI_BITFIELDS)
+    {
+        PaletteMemory += 12;
+    }
+    else if(BitmapHeader->bV5Compression == 6)//BI_ALPHABITFIELDS
+    {
+        PaletteMemory += 16;
+    }
+    
+    u32 PaletteSize = BitmapHeader->bV5ClrUsed * sizeof(RGBQUAD);
+    if(BitmapHeader->bV5BitCount < 16 && BitmapHeader->bV5ClrUsed == 0)
+    {
+        PaletteSize = 1 << BitmapHeader->bV5BitCount;
+    }
+    
+    if(PaletteMemory + PaletteSize > MemoryEnd)
+    {
+        LogError("Invalid BMP pallet size.", "BMP Reader");
+        return;
+    }
+    
+    u8 *Bitmap = Memory + BitmapOffset;
+    if(BitmapOffset == 0)
+    {
+        Bitmap = PaletteMemory + PaletteSize;
+    }
+    
+    if(BitmapHeader->bV5Compression != BI_JPEG && BitmapHeader->bV5Compression != BI_PNG && Bitmap + BitmapHeader->bV5SizeImage > MemoryEnd)
+    {
+        LogError("Invalid BMP image size.", "BMP Reader");
+        return;
+    }
+    
+    if(OpenGLGlobal.Initialized)
+    {
+        SetTexture(&OpenGLGlobal, BitmapHeader->bV5Width, BitmapHeader->bV5Height, Bitmap);
+    }
+}
+
+static void
+DisplayImageFromFile(char *FilePath, HWND Window)
 {
     LogError(FilePath, "file to read");
+}
+
+static void
+DisplayDroppedFile(HDROP DropHandle, HWND Window)
+{
+    char FilePath[MAX_PATH];
+    DragQueryFileA(DropHandle, 0, FilePath, MAX_PATH);
+    DragFinish(DropHandle);
+    
+    DisplayImageFromFile(FilePath, Window);
+}
+
+static void
+PasteClipboard(HWND Window)
+{
+    UINT PriorityList[] = 
+    {
+        CF_DIBV5,
+        CF_HDROP
+    };
+    int ClipboardFormat = GetPriorityClipboardFormat(PriorityList, ArrayCount(PriorityList));
+    
+    if(ClipboardFormat == 0 || ClipboardFormat == -1)
+    {
+        return;
+    }
+    if(!OpenClipboard(Window))
+    {
+        return;
+    }
+    
+    switch(ClipboardFormat)
+    {
+        case CF_DIBV5:
+        {
+            HANDLE ClipboardHandle = GetClipboardData(ClipboardFormat);
+            SIZE_T DataSize = GlobalSize(ClipboardHandle);
+            void *DataMemory = VirtualAlloc(0, DataSize + 100, MEM_RESERVE|MEM_COMMIT, PAGE_READWRITE);
+            void *DataPointer = GlobalLock(ClipboardHandle);
+            CopyMemory(DataMemory, DataPointer, DataSize);
+            GlobalUnlock(DataPointer);
+            
+            DisplayBMP((BITMAPV5HEADER *)DataMemory, 0, DataSize, Window);
+            
+            VirtualFree(DataMemory, 0, MEM_RELEASE);
+            InvalidateRect(Window, 0, true);
+        } break;
+        
+        case CF_HDROP:
+        {
+            DisplayDroppedFile((HDROP)GetClipboardData(ClipboardFormat), Window);
+        } break;
+    }
+    CloseClipboard();
 }
 
 LRESULT CALLBACK
@@ -177,6 +282,11 @@ MainWindowCallback(HWND Window, UINT Message, WPARAM WParam, LPARAM LParam)
         case WM_CLOSE:
         {
             PostQuitMessage(0);
+        } break;
+        
+        case WM_SIZING:
+        {
+            InvalidateRect(Window, 0, true);
         } break;
         
         case WM_PAINT:
@@ -198,14 +308,41 @@ MainWindowCallback(HWND Window, UINT Message, WPARAM WParam, LPARAM LParam)
             }
         } break;
         
+        case WM_KEYDOWN:
+        case WM_SYSKEYDOWN:
+        {
+            b32 IsCrltDown = GetKeyState(VK_CONTROL) & (1 << 7);
+            b32 IsAltDown = LParam & (1 << 29);
+            b32 WasKeyAlreadyDown = LParam & (1 << 30);
+            switch(WParam)
+            {
+                case VK_F4:
+                {
+                    if(IsAltDown && !WasKeyAlreadyDown && !IsCrltDown)
+                    {
+                        PostMessageA(Window, WM_CLOSE, 0, 0);
+                    }
+                } break;
+                
+                case 'V':
+                {
+                    if(!IsAltDown && !WasKeyAlreadyDown && IsCrltDown)
+                    {
+                        PasteClipboard(Window);
+                    }
+                } break;
+            }
+        } break;
+        
+        case WM_KEYUP:
+        case WM_SYSKEYUP:
+        {
+            
+        } break;
+        
         case WM_DROPFILES:
         {
-            HDROP DropHandle = (HDROP)WParam;
-            char FilePath[MAX_PATH];
-            DragQueryFileA(DropHandle, 0, FilePath, MAX_PATH);
-            DragFinish(DropHandle);
-            
-            ReadImageFromFile(FilePath, Window);
+            DisplayDroppedFile((HDROP)WParam, Window);
         } break;
         
         default:
@@ -260,7 +397,7 @@ WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CommandLine, int ShowC
     
     if(CommandLine && *CommandLine != '\0')
     {
-        ReadImageFromFile(CommandLine, Window);
+        DisplayImageFromFile(CommandLine, Window);
     }
     
     for(;;)

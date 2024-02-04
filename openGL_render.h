@@ -25,6 +25,9 @@ struct open_gl
 {
     v2u Window;
     
+    GLuint ImageTextureHandle;
+    v2u ImageSize;
+    
     render_program_base PaintCheckerProgram;
     render_program_base PaintTextureProgram;
 };
