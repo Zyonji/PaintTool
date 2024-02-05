@@ -212,9 +212,38 @@ DisplayBMP(BITMAPV5HEADER *BitmapHeader, u32 BitmapOffset, SIZE_T DataSize, HWND
 }
 
 static void
+DisplayImageFromData(void *FileMemory, s64 FileSize)
+{
+    LogError("The image data in memory needs to be decoded.", "Image Decoder");
+}
+
+static void
 DisplayImageFromFile(char *FilePath, HWND Window)
 {
-    LogError(FilePath, "file to read");
+    HANDLE FileHandle = CreateFileA(FilePath, GENERIC_READ, FILE_SHARE_READ, 0, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
+    if(FileHandle)
+    {
+        LARGE_INTEGER FileSize;
+        GetFileSizeEx(FileHandle, &FileSize);
+        if(FileSize.QuadPart)
+        {
+            HANDLE FileMappingHandle = CreateFileMappingA(FileHandle, 0, PAGE_READONLY, 0, 0, 0);
+            if(FileMappingHandle)
+            {
+                void *FileMemory = MapViewOfFile(FileMappingHandle, FILE_MAP_READ, 0, 0, 0);
+                if(FileMemory)
+                {
+                    DisplayImageFromData(FileMemory, FileSize.QuadPart);
+                    
+                    UnmapViewOfFile(FileMemory);
+                }
+                
+                CloseHandle(FileMappingHandle);
+            }
+        }
+        
+        CloseHandle(FileHandle);
+    }
 }
 
 static void
@@ -223,6 +252,7 @@ DisplayDroppedFile(HDROP DropHandle, HWND Window)
     char FilePath[MAX_PATH];
     DragQueryFileA(DropHandle, 0, FilePath, MAX_PATH);
     DragFinish(DropHandle);
+    // TODO(Zyonji): Handle multiple files instead of just the first file.
     
     DisplayImageFromFile(FilePath, Window);
 }
@@ -252,7 +282,7 @@ PasteClipboard(HWND Window)
         {
             HANDLE ClipboardHandle = GetClipboardData(ClipboardFormat);
             SIZE_T DataSize = GlobalSize(ClipboardHandle);
-            void *DataMemory = VirtualAlloc(0, DataSize + 100, MEM_RESERVE|MEM_COMMIT, PAGE_READWRITE);
+            void *DataMemory = VirtualAlloc(0, DataSize, MEM_RESERVE|MEM_COMMIT, PAGE_READWRITE);
             void *DataPointer = GlobalLock(ClipboardHandle);
             CopyMemory(DataMemory, DataPointer, DataSize);
             GlobalUnlock(DataPointer);
@@ -397,6 +427,7 @@ WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CommandLine, int ShowC
     
     if(CommandLine && *CommandLine != '\0')
     {
+        // TODO(Zyonji): Handle generic command line parameters.
         DisplayImageFromFile(CommandLine, Window);
     }
     

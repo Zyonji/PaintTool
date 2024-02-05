@@ -220,3 +220,38 @@ After this, we'd also want to call [`glGenerateMipmap`](https://registry.khronos
 
 ## Rendering with the Correct Aspect Ratio
 To finish this section up, I'll add a few lines to render the image in the right aspect ratio. Having it always match the window size makes it more difficult to spot errors of the decoding process. We simply use a second [Viewport](https://registry.khronos.org/OpenGL-Refpages/gl4/html/glViewport.xhtml) call after clearing the window to only paint a subsection, which matches the aspect ratio of the image. We also want to [`InvalidateRect`](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-invalidaterect) for each `WM_SIZING` message, so we can test the code we just wrote.
+
+## Loading a File into Memory
+We currently load image data into memory through the device independent bitmap of the clipboard. This is the data of a common BMP file without the file header. Through the clipboard we could also access the data of a tagged-image file (TIFF) and even a metafile picture format structure (an old image format I personally haven't seen used anywhere). What's left to handle is all the other input methods that give us null terminated strings containing a file path.
+
+[`CreateFile`](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilea) takes such a file path and returns a file handle. The size of the file associated with the handle can be determined using [`GetFileSizeEx`](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getfilesizeex). From here we have two options. The straight forward way is to [Allocate Memory](https://learn.microsoft.com/en-us/windows/win32/api/memoryapi/nf-memoryapi-virtualalloc), with the size of the file, and then store the file data in that memory using [`ReadFile`](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-readfile). With large files, we then would need to either read the entirety of the file into memory all at once, or write additional code to load more data when needed.
+
+Alternatively, we can use [File Mapping](https://learn.microsoft.com/en-us/windows/win32/memory/file-mapping) to page a read only reference of the file data into memory, which gets loaded Windows memory management when we try to access it. Our previous dummy function `DisplayImageFromFile` gets replaced with this function calling a new dummy function `DisplayImageFromData`:
+```cpp
+static void
+DisplayImageFromFile(char *FilePath, HWND Window)
+{
+    HANDLE FileHandle = CreateFileA(FilePath, GENERIC_READ, FILE_SHARE_READ, 0, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
+    if(FileHandle)
+    {
+        LARGE_INTEGER FileSize;
+        GetFileSizeEx(FileHandle, &FileSize);
+        if(FileSize.QuadPart)
+        {
+            HANDLE FileMappingHandle = CreateFileMappingA(FileHandle, 0, PAGE_READONLY, 0, 0, 0);
+            if(FileMappingHandle)
+            {
+                void *FileMemory = MapViewOfFile(FileMappingHandle, FILE_MAP_READ, 0, 0, 0);
+                if(FileMemory)
+                {
+                    DisplayImageFromData(FileMemory, FileSize.QuadPart);
+                    
+                    UnmapViewOfFile(FileMemory);
+                }
+                CloseHandle(FileMappingHandle);
+            }
+        }
+        CloseHandle(FileHandle);
+    }
+}
+```
