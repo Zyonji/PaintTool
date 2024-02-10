@@ -42,7 +42,8 @@ typedef intptr_t smm;
 
 #define S32Min ((s32)0x80000000)
 #define S32Max ((s32)0x7fffffff)
-#define U32Min 0
+#define U8Max  ((u8)-1)
+#define U16Max ((u16)-1)
 #define U32Max ((u32)-1)
 #define U64Max ((u64)-1)
 #define F32Max FLT_MAX
@@ -55,6 +56,12 @@ typedef intptr_t smm;
 
 #define ArrayCount(Array) (sizeof(Array) / sizeof((Array)[0]))
 #define OffsetOf(type, Member) (umm)&(((type *)0)->Member)
+
+#define TWOCC(String) (*(u16 *)(String))
+#define FOURCC(String) (*(u32 *)(String)
+#define EIGHTCC(String) (*(u64 *)(String))
+
+#define Absolute(Number) ((Number<0)?(-Number):(Number))
 
 union v2
 {
@@ -122,6 +129,29 @@ union v3
     r32 E[3];
 };
 
+union v3u
+{
+    struct
+    {
+        u32 x, y, z;
+    };
+    struct
+    {
+        u32 r, g, b;
+    };
+    struct
+    {
+        v2u xy;
+        u32 Ignored0_;
+    };
+    struct
+    {
+        u32 Ignored1_;
+        v2u yz;
+    };
+    u32 E[3];
+};
+
 union v4
 {
     struct
@@ -176,4 +206,60 @@ union v4
         r32 Bottom;
     };
     r32 E[4];
+};
+
+union v4u
+{
+    struct
+    {
+        union
+        {
+            v3u xyz;
+            struct
+            {
+                u32 x, y, z;
+            };
+        };
+        
+        u32 w;
+    };
+    struct
+    {
+        union
+        {
+            v3u rgb;
+            struct
+            {
+                u32 r, g, b;
+            };
+        };
+        
+        u32 a;
+    };
+    struct
+    {
+        v2u xy;
+        u32 Ignored0_;
+        u32 Ignored1_;
+    };
+    struct
+    {
+        u32 Ignored2_;
+        v2u yz;
+        u32 Ignored3_;
+    };
+    struct
+    {
+        u32 Ignored4_;
+        u32 Ignored5_;
+        v2u zw;
+    };
+    struct
+    {
+        u32 Right;
+        u32 Left;
+        u32 Top;
+        u32 Bottom;
+    };
+    u32 E[4];
 };

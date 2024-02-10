@@ -1,6 +1,3 @@
-#include <windows.h>
-#include <GL/gl.h>
-
 /*
 PAINTTOOL_CODE_VERIFICATION:
 - 0 - Optional checks correct execution of code are skipped.
@@ -16,6 +13,31 @@ PAINTTOOL_CODE_VERIFICATION:
 
 #endif
 
+#include "types.h"// Definition of variable types.
+
+// Platform independent segment with forward declaration of required platform specific functions.
+#include "fileprocessor/imageprocessor.h"
+
+void LogError(char*, char*);
+void* RequestImageBuffer(u64);
+void FreeImageBuffer(void*);
+void StoreImage(void*, image_processor_tasks);
+
+#include "fileprocessor/imageprocessor.cpp"
+
+// OpenGL segment.
+
+#include <windows.h>
+#include <GL/gl.h>
+#include "wgl.h"// Declaration of OpenGL function pointers and constants.
+#include "openGL_render.cpp"
+
+//Platform specific segment
+
+#include "windows_painttool.h"
+
+static win_global Global;
+
 void
 LogError(char *Text, char *Caption)
 {
@@ -23,14 +45,6 @@ LogError(char *Text, char *Caption)
     MessageBox(NULL, Text, Caption, MB_OK | MB_ICONHAND);
     Assert(false);
 }
-
-#include "types.h"
-#include "openGL_render.h"
-#include "windows_painttool.h"
-
-#include "openGL_render.cpp"
-
-static win_open_gl OpenGLGlobal;
 
 static void
 SetPixelFormat(HDC WindowDC)
@@ -145,7 +159,7 @@ InitOpenGL(HINSTANCE Instance, HWND Window)
         LogError("Unable to link to all OpenGL", "OpenGL");
         return(false);
     }
-    if(!OpenGLInitPrograms(&OpenGLGlobal))
+    if(!OpenGLInitPrograms(&Global.OpenGL))
     {
         ReleaseDC(Window, WindowDC);
         LogError("Unable to initialize OpenGL.", "OpenGL");
@@ -154,67 +168,38 @@ InitOpenGL(HINSTANCE Instance, HWND Window)
     
     ReleaseDC(Window, WindowDC);
     
-    OpenGLGlobal.Initialized = true;
-    OpenGLGlobal.RenderingContext = OpenGLRC;
+    Global.Initialized = true;
+    Global.RenderingContext = OpenGLRC;
     
     return(true);
 }
 
-static void
-DisplayBMP(BITMAPV5HEADER *BitmapHeader, u32 BitmapOffset, SIZE_T DataSize, HWND Window)
+// The returned buffer must be all 0.
+void *
+RequestImageBuffer(u64 DataSize)
 {
-    u8 *Memory = (u8 *)BitmapHeader;
-    u8 *MemoryEnd = Memory + DataSize;
-    if(Memory + BitmapHeader->bV5Size >= MemoryEnd)
-    {
-        LogError("Invalid BMP header size.", "BMP Reader");
-        return;
-    }
+    // TODO(Zyonji): Set a maximum Size for image buffers
+    // TODO(Zyonji): Make a more complete memory manager.
+    void *DataMemory = 0;
+    DataMemory = VirtualAlloc(0, DataSize, MEM_RESERVE|MEM_COMMIT, PAGE_READWRITE);
     
-    u8 *PaletteMemory = Memory + BitmapHeader->bV5Size;
-    if(BitmapHeader->bV5Compression == BI_BITFIELDS)
-    {
-        PaletteMemory += 12;
-    }
-    else if(BitmapHeader->bV5Compression == 6)//BI_ALPHABITFIELDS
-    {
-        PaletteMemory += 16;
-    }
-    
-    u32 PaletteSize = BitmapHeader->bV5ClrUsed * sizeof(RGBQUAD);
-    if(BitmapHeader->bV5BitCount < 16 && BitmapHeader->bV5ClrUsed == 0)
-    {
-        PaletteSize = 1 << BitmapHeader->bV5BitCount;
-    }
-    
-    if(PaletteMemory + PaletteSize > MemoryEnd)
-    {
-        LogError("Invalid BMP pallet size.", "BMP Reader");
-        return;
-    }
-    
-    u8 *Bitmap = Memory + BitmapOffset;
-    if(BitmapOffset == 0)
-    {
-        Bitmap = PaletteMemory + PaletteSize;
-    }
-    
-    if(BitmapHeader->bV5Compression != BI_JPEG && BitmapHeader->bV5Compression != BI_PNG && Bitmap + BitmapHeader->bV5SizeImage > MemoryEnd)
-    {
-        LogError("Invalid BMP image size.", "BMP Reader");
-        return;
-    }
-    
-    if(OpenGLGlobal.Initialized)
-    {
-        SetTexture(&OpenGLGlobal, BitmapHeader->bV5Width, BitmapHeader->bV5Height, Bitmap);
-    }
+    return(DataMemory);
 }
 
-static void
-DisplayImageFromData(void *FileMemory, s64 FileSize)
+void
+FreeImageBuffer(void *DataMemory)
 {
-    LogError("The image data in memory needs to be decoded.", "Image Decoder");
+    VirtualFree(DataMemory, 0, MEM_RELEASE);
+}
+
+void
+StoreImage(void *Bitmap, image_processor_tasks Processor)
+{
+    // TODO(Zyonji): Set a maximum size for image buffers.
+    if(Global.Initialized)
+    {
+        SetImageBuffer(&Global.OpenGL, Bitmap, Processor);
+    }
 }
 
 static void
@@ -233,8 +218,10 @@ DisplayImageFromFile(char *FilePath, HWND Window)
                 void *FileMemory = MapViewOfFile(FileMappingHandle, FILE_MAP_READ, 0, 0, 0);
                 if(FileMemory)
                 {
-                    DisplayImageFromData(FileMemory, FileSize.QuadPart);
+                    u8 *FileEndpoint = (u8 *)FileMemory + FileSize.QuadPart;
+                    DisplayImageFromData(FileMemory, FileEndpoint);
                     
+                    InvalidateRect(Window, 0, true);
                     UnmapViewOfFile(FileMemory);
                 }
                 
@@ -287,7 +274,7 @@ PasteClipboard(HWND Window)
             CopyMemory(DataMemory, DataPointer, DataSize);
             GlobalUnlock(DataPointer);
             
-            DisplayBMP((BITMAPV5HEADER *)DataMemory, 0, DataSize, Window);
+            BMP_DataDecoder((BMP_Win32BitmapHeader *)DataMemory, (u8 *)DataMemory + DataSize, 0);
             
             VirtualFree(DataMemory, 0, MEM_RELEASE);
             InvalidateRect(Window, 0, true);
@@ -323,14 +310,14 @@ MainWindowCallback(HWND Window, UINT Message, WPARAM WParam, LPARAM LParam)
         {
             RECT ClientRect;
             GetClientRect(Window, &ClientRect);
-            OpenGLGlobal.Window.Width = ClientRect.right - ClientRect.left;
-            OpenGLGlobal.Window.Height = ClientRect.bottom - ClientRect.top;
+            Global.OpenGL.Window.Width = ClientRect.right - ClientRect.left;
+            Global.OpenGL.Window.Height = ClientRect.bottom - ClientRect.top;
             
-            if(OpenGLGlobal.Initialized)
+            if(Global.Initialized)
             {
                 HDC WindowDC = GetDC(Window);
-                wglMakeCurrent(WindowDC, OpenGLGlobal.RenderingContext);
-                DisplayBuffer(&OpenGLGlobal);
+                wglMakeCurrent(WindowDC, Global.RenderingContext);
+                DisplayBuffer(&Global.OpenGL);
                 SwapBuffers(WindowDC);
                 ReleaseDC(Window, WindowDC);
                 

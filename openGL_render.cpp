@@ -1,3 +1,4 @@
+#include "openGL_render.h"
 #include "GLSL\shader_globals.cpp"
 
 static GLuint
@@ -78,6 +79,17 @@ CompilePaintTextureProgram(open_gl *OpenGL, render_program_base *Result)
     return(Program);
 }
 
+static GLuint
+CompileFlipTextureProgram(open_gl *OpenGL, flip_texture_program *Result)
+{
+    GLuint Program = OpenGLCreateProgram(GlobalBasicShaderHeaderCode, FlipTexture_VertexCode, FlipTexture_FragmentCode, &Result->Common);
+    
+    Result->OffsetID = glGetUniformLocation(Program, "Offset");
+    Result->StrideID = glGetUniformLocation(Program, "Stride");
+    
+    return(Program);
+}
+
 b32
 OpenGLInitPrograms(open_gl *OpenGL)
 {
@@ -109,6 +121,12 @@ OpenGLInitPrograms(open_gl *OpenGL)
         return(false);
     }
     
+    if(!CompileFlipTextureProgram(OpenGL, &OpenGL->FlipTextureProgram))
+    {
+        LogError("Unable to compile the paint texture program.", "OpenGL");
+        return(false);
+    }
+    
     return(true);
 }
 
@@ -131,7 +149,6 @@ OpenGLProgramBegin(render_program_base *Program)
         glVertexAttribPointer(UVArray, 2, GL_FLOAT, false, sizeof(common_vertex), (void *)OffsetOf(common_vertex, UV));
     }
 }
-
 static void
 OpenGLProgramEnd(render_program_base *Program)
 {
@@ -150,38 +167,252 @@ OpenGLProgramEnd(render_program_base *Program)
     }
 }
 
-void
-SetTexture(open_gl *OpenGL, u32 Width, u32 Height, void *Memory)
+static void
+OpenGLProgramBegin(flip_texture_program *Program, s32 OffsetX, s32 OffsetY, s32 StrideX, s32 StrideY)
 {
-    if(OpenGL->ImageTextureHandle)
-    {
-        glDeleteTextures(1, &OpenGL->ImageTextureHandle);
-    }
+    OpenGLProgramBegin(&Program->Common);
     
-    OpenGL->ImageSize = {Width, Height};
+    glUniform2i(Program->OffsetID, OffsetX, OffsetY);
+    glUniform2i(Program->StrideID, StrideX, StrideY);
+}
+static void
+OpenGLProgramEnd(flip_texture_program *Program)
+{
+    OpenGLProgramEnd(&Program->Common);
+}
+
+static GLuint
+GenerateImageTexture(open_gl *OpenGL, GLenum Format, GLenum Type, u32 Width, u32 Height, void *Data)
+{
+    GLuint Result = 0;
     
-    glGenTextures(1, &OpenGL->ImageTextureHandle);
-    glBindTexture(GL_TEXTURE_2D, OpenGL->ImageTextureHandle);
+    glGenTextures(1, &Result);
+    glBindTexture(GL_TEXTURE_2D, Result);
     // TODO(Zyonji): Check if GL_RGBA16 or GL_RGBA32F are more desireable internal formats.
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, Width, Height, 0, GL_BGRA, GL_UNSIGNED_BYTE, Memory);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, Width, Height, 0, Format, Type, Data);
     glGenerateMipmap(GL_TEXTURE_2D);
     
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    
+    return(Result);
+}
+
+static frame_buffer
+CreateFramebuffer(open_gl *OpenGL, GLenum DataFormat, GLenum DataType, u32 Width, u32 Height, void *Data)
+{
+    frame_buffer Buffer = {};
+    
+    Buffer.Size = {Width, Height};
+    
+    glGenFramebuffers(1, &Buffer.FramebufferHandle);
+    glBindFramebuffer(GL_FRAMEBUFFER, Buffer.FramebufferHandle);
+    
+    Buffer.ColorHandle = GenerateImageTexture(OpenGL, DataFormat, DataType, Width, Height, Data);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, Buffer.ColorHandle, 0);
+    
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    
+    return(Buffer);
+}
+
+static void
+DeleteFramebuffer(frame_buffer Framebuffer)
+{
+    if(Framebuffer.FramebufferHandle)
+    {
+        glDeleteFramebuffers(1, &Framebuffer.FramebufferHandle);
+    }
+    if(Framebuffer.ColorHandle)
+    {
+        glDeleteTextures(1, &Framebuffer.ColorHandle);
+    }
+}
+
+void
+SetImageBuffer(open_gl *OpenGL, void *Data, image_processor_tasks Processor)
+{
+    DeleteFramebuffer(OpenGL->ImageBuffer);
+    DeleteFramebuffer(OpenGL->SwapBuffer);
+    
+    frame_buffer Buffer;
+    frame_buffer SwapBuffer;
+    
+    glViewport(0, 0, Processor.Width, Processor.Height);
+    
+    GLenum DataFormat = 0;
+    GLenum DataType = 0;
+    
+    if(Processor.BitsPerPixel >= 8)
+    {
+        u32 BytesPerPixel = Processor.BitsPerPixel / 8;
+        for(u8 i = BYTE_COUNT_MAP[BytesPerPixel - 1]; i < BYTE_COUNT_MAP[BytesPerPixel]; i++)
+        {
+            if(Processor.RedMask   == CHANNEL_MASK_MAP[i].RedMask   &&
+               Processor.GreenMask == CHANNEL_MASK_MAP[i].GreenMask &&
+               Processor.BlueMask  == CHANNEL_MASK_MAP[i].BlueMask  &&
+               Processor.AlphaMask == CHANNEL_MASK_MAP[i].AlphaMask)
+            {
+                DataFormat = CHANNEL_MASK_MAP[i].DataFormat;
+                DataType = CHANNEL_MASK_MAP[i].DataType;
+                break;
+            }
+        }
+    }
+    
+    if(DataType)
+    {
+        if(Processor.PalletSize == 0)
+        {
+            Buffer = CreateFramebuffer(OpenGL, DataFormat, DataType,
+                                       Processor.Width, Processor.Height, Data);
+        }
+        else
+        {
+            u32 BitMask = Processor.ByteAlignment - 1;
+            u32 BytesPerRow = ((Processor.BitsPerPixel * Processor.Width + 7) / 8 + BitMask) & (~BitMask);
+            u64 DataSize = Processor.Width * Processor.Height * 4;
+            void *NewData = RequestImageBuffer(DataSize);
+            
+            DereferenceColorIndex(Data, NewData, Processor.PalletData, Processor.PalletSize,
+                                  Processor.Width, Processor.Height, BytesPerRow, Processor.BitsPerPixel);
+            
+            Buffer = CreateFramebuffer(OpenGL, DataFormat, DataType,
+                                       Processor.Width, Processor.Height, NewData);
+            
+            FreeImageBuffer(NewData);
+        }
+    }
+    else
+    {
+        u32 MaximumChannelSize = 0;
+        channel_location RedLocation = GetChannelLocation(Processor.RedMask);
+        if(RedLocation.BitCount > MaximumChannelSize)
+        {
+            MaximumChannelSize = RedLocation.BitCount;
+        }
+        channel_location GreenLocation = GetChannelLocation(Processor.GreenMask);
+        if(GreenLocation.BitCount > MaximumChannelSize)
+        {
+            MaximumChannelSize = GreenLocation.BitCount;
+        }
+        channel_location BlueLocation = GetChannelLocation(Processor.BlueMask);
+        if(BlueLocation.BitCount > MaximumChannelSize)
+        {
+            MaximumChannelSize = BlueLocation.BitCount;
+        }
+        channel_location AlphaLocation = GetChannelLocation(Processor.AlphaMask);
+        if(AlphaLocation.BitCount > MaximumChannelSize)
+        {
+            MaximumChannelSize = AlphaLocation.BitCount;
+        }
+        
+#if 0
+        // TODO(Zyonji): Currently the textures are stored as 8 bit per channel, making higher precision superfluous. Reconsider after having settled on a texture storage format.
+        if(MaximumChannelSize > 8)
+            RearrangeChannelsToU64();
+        else
+            RearrangeChannelsToU32();
+#endif
+        
+        u32 BitMask = Processor.ByteAlignment - 1;
+        u32 BytesPerRow = ((Processor.BitsPerPixel * Processor.Width + 7) / 8 + BitMask) & (~BitMask);
+        
+        if(Processor.PalletSize == 0)
+        {
+            u64 DataSize = Processor.Width * Processor.Height * 4;
+            void *NewData = RequestImageBuffer(DataSize);
+            
+            RearrangeChannelsToU32(Data, NewData,
+                                   Processor.RedMask,   Processor.GreenMask,
+                                   Processor.BlueMask,  Processor.AlphaMask, 
+                                   RedLocation.Offset,  GreenLocation.Offset,
+                                   BlueLocation.Offset, AlphaLocation.Offset,
+                                   Processor.Width, Processor.Height, BytesPerRow, Processor.BitsPerPixel);
+            
+            Buffer = CreateFramebuffer(OpenGL, GL_RGBA, GL_UNSIGNED_INT_8_8_8_8_REV,
+                                       Processor.Width, Processor.Height, NewData);
+            
+            FreeImageBuffer(NewData);
+        }
+        else
+        {
+            u64 ImageSize = Processor.Width * Processor.Height;
+            u64 DataSize = ImageSize * 4 + Processor.PalletSize * 4;
+            void *NewData = RequestImageBuffer(DataSize);
+            u32 *NewPalletData = ((u32 *)NewData) + ImageSize;
+            
+            RearrangeChannelsU32ToU32(Processor.PalletData, NewPalletData,
+                                      (u32)Processor.RedMask,  (u32)Processor.GreenMask,
+                                      (u32)Processor.BlueMask, (u32)Processor.AlphaMask, 
+                                      RedLocation.Offset,  GreenLocation.Offset,
+                                      BlueLocation.Offset, AlphaLocation.Offset,
+                                      Processor.PalletSize, 1, BytesPerRow);
+            
+            DereferenceColorIndex(Data, NewData, NewPalletData, Processor.PalletSize,
+                                  Processor.Width, Processor.Height, BytesPerRow, Processor.BitsPerPixel);
+            
+            Buffer = CreateFramebuffer(OpenGL, GL_RGBA, GL_UNSIGNED_INT_8_8_8_8_REV,
+                                       Processor.Width, Processor.Height, NewData);
+            
+            FreeImageBuffer(NewData);
+        }
+    }
+    
+    SwapBuffer = CreateFramebuffer(OpenGL, GL_BGRA, GL_UNSIGNED_BYTE, Processor.Width, Processor.Height, 0);
+    
+    if(Processor.FlippedX || Processor.FlippedY)
+    {
+        s32 OffsetX = 0;
+        s32 StrideX = 1;
+        s32 OffsetY = 0;
+        s32 StrideY = 1;
+        
+        if(Processor.FlippedX)
+        {
+            OffsetX = Processor.Width - 1;
+            StrideX = -1;
+        }
+        if(Processor.FlippedY)
+        {
+            OffsetY = Processor.Height - 1;
+            StrideY = -1;
+        }
+        
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, SwapBuffer.FramebufferHandle);
+        glBindTexture(GL_TEXTURE_2D, Buffer.ColorHandle);
+        
+        OpenGLProgramBegin(&OpenGL->FlipTextureProgram, OffsetX, OffsetY, StrideX, StrideY);
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+        OpenGLProgramEnd(&OpenGL->FlipTextureProgram);
+        
+        glBindTexture(GL_TEXTURE_2D, SwapBuffer.ColorHandle);
+        glGenerateMipmap(GL_TEXTURE_2D);
+        
+        frame_buffer TempBuffer = Buffer;
+        Buffer = SwapBuffer;
+        SwapBuffer = TempBuffer;
+    }
+    
+    glBindTexture(GL_TEXTURE_2D, 0);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+    OpenGL->ImageBuffer = Buffer;
 }
 
 void
 DisplayBuffer(open_gl *OpenGL)
 {
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
     glViewport(0, 0, OpenGL->Window.Width, OpenGL->Window.Height);
     glClearColor(0.5, 0.5, 0.5, 1.0);
     glClear(GL_COLOR_BUFFER_BIT);
     
-    if(OpenGL->ImageTextureHandle)
+    if(OpenGL->ImageBuffer.ColorHandle)
     {
-        r32 Ratio = (r32)OpenGL->ImageSize.Width / (r32)OpenGL->ImageSize.Height;
+        r32 Ratio = (r32)OpenGL->ImageBuffer.Size.Width / (r32)OpenGL->ImageBuffer.Size.Height;
         if((r32)OpenGL->Window.Width / (r32)OpenGL->Window.Height > Ratio)
         {
             glViewport(0, 0, (u32)(OpenGL->Window.Height * Ratio), OpenGL->Window.Height);
@@ -191,11 +422,12 @@ DisplayBuffer(open_gl *OpenGL)
             glViewport(0, 0, OpenGL->Window.Width, (u32)(OpenGL->Window.Width / Ratio));
         }
         
+        glBindTexture(GL_TEXTURE_2D, OpenGL->ImageBuffer.ColorHandle);
+        
         OpenGLProgramBegin(&OpenGL->PaintTextureProgram);
-        glBindTexture(GL_TEXTURE_2D, OpenGL->ImageTextureHandle);
         glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-        glBindTexture(GL_TEXTURE_2D, 0);
         OpenGLProgramEnd(&OpenGL->PaintTextureProgram);
+        glBindTexture(GL_TEXTURE_2D, 0);
     }
     else
     {

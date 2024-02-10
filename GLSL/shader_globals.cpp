@@ -1,3 +1,26 @@
+static char *FlipTexture_FragmentCode = R"glsl(
+uniform ivec2 Offset;
+uniform ivec2 Stride;
+uniform sampler2D Image;
+
+out vec4 FragmentColor;
+
+void main(void)
+{
+    ivec2 Target = Stride * ivec2(gl_FragCoord.xy) + Offset;
+    FragmentColor = texelFetch(Image, Target, 0);
+}
+)glsl";
+
+static char *FlipTexture_VertexCode = R"glsl(
+in vec4 VertP;
+
+void main(void)
+{
+	gl_Position = VertP;
+}
+)glsl";
+
 static char *PaintChecker_FragmentCode = R"glsl(
 out vec4 FragmentColor;
 
@@ -32,6 +55,7 @@ void main(void)
 	vec4 Color = texture(Image, FragUV);
     
 	FragmentColor = vec4(mix(Background, Color.rgb, Color.a), 1.0);
+    //FragmentColor = vec4(Color.rgb, 1.0);
 }
 )glsl";
 

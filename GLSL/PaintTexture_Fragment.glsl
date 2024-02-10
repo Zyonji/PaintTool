@@ -11,4 +11,5 @@ void main(void)
 	vec4 Color = texture(Image, FragUV);
     
 	FragmentColor = vec4(mix(Background, Color.rgb, Color.a), 1.0);
+    //FragmentColor = vec4(Color.rgb, 1.0);
 }
