@@ -1,4 +1,4 @@
-#define BMP_SIGNATURE TWOCC("BM")
+#define BMP_SIGNATURE 0x4d42// TWOCC("BM")
 
 #define BMP_COMPRESSION_RGB            0
 #define BMP_COMPRESSION_RLE8           1

@@ -37,7 +37,7 @@ Once the image data is in RAM, we'll test if it's one of the image formats we kn
 
 We'll start with the following formats and add more when needed:
 - [Bitmap Code](/docs/Bitmap.md) (`.bmp`)
-- Portable Network Graphics Code (`.png`)
+- [Portable Network Graphics Code](/docs/PNG.md) (`.png`)
 - JPEG File Interchange Format Code (`.jpg`)
 - WebP Code (`.webp`)
 

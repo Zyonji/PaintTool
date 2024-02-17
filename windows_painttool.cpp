@@ -1,3 +1,5 @@
+#include "types.h"// Definition of variable types.
+
 /*
 PAINTTOOL_CODE_VERIFICATION:
 - 0 - Optional checks correct execution of code are skipped.
@@ -5,15 +7,13 @@ PAINTTOOL_CODE_VERIFICATION:
 */
 #if PAINTTOOL_CODE_VERIFICATION
 
-#define Assert(Expression) if(!(Expression)) {DebugBreak();}
+#define Assert(Expression) if(!(Expression)) {__debugbreak();}
 
 #else
 
 #define Assert(Expression)
 
 #endif
-
-#include "types.h"// Definition of variable types.
 
 // Platform independent segment with forward declaration of required platform specific functions.
 #include "fileprocessor/imageprocessor.h"

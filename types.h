@@ -58,10 +58,35 @@ typedef intptr_t smm;
 #define OffsetOf(type, Member) (umm)&(((type *)0)->Member)
 
 #define TWOCC(String) (*(u16 *)(String))
-#define FOURCC(String) (*(u32 *)(String)
+#define FOURCC(String) (*(u32 *)(String))
 #define EIGHTCC(String) (*(u64 *)(String))
 
-#define Absolute(Number) ((Number<0)?(-Number):(Number))
+inline s32 Absolute(s32 Number)
+{
+    return((Number<0)?(-Number):(Number));
+}
+
+inline u64 SwapEndian(u64 Value)
+{
+    return( (Value >> 56) |
+           ((Value >> 40) & 0xff00) |
+           ((Value >> 24) & 0xff0000) |
+           ((Value >>  8) & 0xff000000) |
+           ((Value & 0xff000000) <<  8) |
+           ((Value & 0xff0000)   << 24) |
+           ((Value & 0xff00)     << 40) |
+           ((Value << 56)));
+}
+
+inline u32 SwapEndian(u32 Value)
+{
+    return((Value >> 24) | ((Value >> 8) & 0xff00) | ((Value & 0xff00) << 8) | ((Value << 24)));
+}
+
+inline u16 SwapEndian(u16 Value)
+{
+    return((Value >> 8) | (Value << 8));
+}
 
 union v2
 {

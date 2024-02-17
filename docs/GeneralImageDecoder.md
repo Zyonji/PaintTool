@@ -92,20 +92,21 @@ u8 *Row = (u8 *)Source;
 u32 LinesRemaining = Height;
 while(LinesRemaining--)
 {
-    u64 *From = (u64 *)Row;
+    u8 *From = Row;
     u32 PixelsRemaining = Width;
     while(PixelsRemaining--)
     {
-        u64 Red   = (*From &   RedMask) >>   RedOffset;
-        u64 Green = (*From & GreenMask) >> GreenOffset;
-        u64 Blue  = (*From &  BlueMask) >>  BlueOffset;
-        u64 Alpha = (*From & AlphaMask) >> AlphaOffset;
+        u64 Pixel = *(u64 *)From;
+        u64 Red   = (Pixel &   RedMask) >>   RedOffset;
+        u64 Green = (Pixel & GreenMask) >> GreenOffset;
+        u64 Blue  = (Pixel &  BlueMask) >>  BlueOffset;
+        u64 Alpha = (Pixel & AlphaMask) >> AlphaOffset;
         
         *(To++) = (u8)((r32)Red   *   RedFactor);
         *(To++) = (u8)((r32)Green * GreenFactor);
         *(To++) = (u8)((r32)Blue  *  BlueFactor);
         *(To++) = (u8)((r32)Alpha * AlphaFactor) + AlphaFill;
-        From++;
+        From += BytesPerPixel;;
     }
     Row += BytesPerRow;
 }

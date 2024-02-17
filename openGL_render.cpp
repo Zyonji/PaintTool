@@ -246,7 +246,9 @@ SetImageBuffer(open_gl *OpenGL, void *Data, image_processor_tasks Processor)
     GLenum DataFormat = 0;
     GLenum DataType = 0;
     
-    if(Processor.BitsPerPixel >= 8)
+    glPixelStorei(GL_UNPACK_SWAP_BYTES, Processor.BigEndian);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, Processor.ByteAlignment);
+    if(Processor.BitsPerPixel >= 8 && Processor.TransparentColor == 0)
     {
         u32 BytesPerPixel = Processor.BitsPerPixel / 8;
         for(u8 i = BYTE_COUNT_MAP[BytesPerPixel - 1]; i < BYTE_COUNT_MAP[BytesPerPixel]; i++)
@@ -263,31 +265,22 @@ SetImageBuffer(open_gl *OpenGL, void *Data, image_processor_tasks Processor)
         }
     }
     
-    if(DataType)
+    if(DataType && Processor.PalletSize == 0)
     {
-        if(Processor.PalletSize == 0)
-        {
-            Buffer = CreateFramebuffer(OpenGL, DataFormat, DataType,
-                                       Processor.Width, Processor.Height, Data);
-        }
-        else
-        {
-            u32 BitMask = Processor.ByteAlignment - 1;
-            u32 BytesPerRow = ((Processor.BitsPerPixel * Processor.Width + 7) / 8 + BitMask) & (~BitMask);
-            u64 DataSize = Processor.Width * Processor.Height * 4;
-            void *NewData = RequestImageBuffer(DataSize);
-            
-            DereferenceColorIndex(Data, NewData, Processor.PalletData, Processor.PalletSize,
-                                  Processor.Width, Processor.Height, BytesPerRow, Processor.BitsPerPixel);
-            
-            Buffer = CreateFramebuffer(OpenGL, DataFormat, DataType,
-                                       Processor.Width, Processor.Height, NewData);
-            
-            FreeImageBuffer(NewData);
-        }
+        Buffer = CreateFramebuffer(OpenGL, DataFormat, DataType,
+                                   Processor.Width, Processor.Height, Data);
     }
     else
     {
+        if(Processor.BigEndian)
+        {
+            glPixelStorei(GL_UNPACK_SWAP_BYTES, false);
+            Processor.RedMask   = SwapEndian(Processor.RedMask);
+            Processor.GreenMask = SwapEndian(Processor.GreenMask);
+            Processor.BlueMask  = SwapEndian(Processor.BlueMask);
+            Processor.AlphaMask = SwapEndian(Processor.AlphaMask);
+        }
+        
         u32 MaximumChannelSize = 0;
         channel_location RedLocation = GetChannelLocation(Processor.RedMask);
         if(RedLocation.BitCount > MaximumChannelSize)
@@ -318,6 +311,7 @@ SetImageBuffer(open_gl *OpenGL, void *Data, image_processor_tasks Processor)
             RearrangeChannelsToU32();
 #endif
         
+        // Expects the byte alignment to be a power of 2.
         u32 BitMask = Processor.ByteAlignment - 1;
         u32 BytesPerRow = ((Processor.BitsPerPixel * Processor.Width + 7) / 8 + BitMask) & (~BitMask);
         
@@ -331,7 +325,29 @@ SetImageBuffer(open_gl *OpenGL, void *Data, image_processor_tasks Processor)
                                    Processor.BlueMask,  Processor.AlphaMask, 
                                    RedLocation.Offset,  GreenLocation.Offset,
                                    BlueLocation.Offset, AlphaLocation.Offset,
-                                   Processor.Width, Processor.Height, BytesPerRow, Processor.BitsPerPixel);
+                                   Processor.Width, Processor.Height, BytesPerRow,
+                                   Processor.BitsPerPixel, Processor.BigEndian);
+            
+            if(Processor.TransparentColor)
+            {
+                u32 TransparentColor;
+                RearrangeChannelsToU32(&Processor.TransparentColor, &TransparentColor,
+                                       Processor.RedMask,   Processor.GreenMask,
+                                       Processor.BlueMask,  Processor.AlphaMask, 
+                                       RedLocation.Offset,  GreenLocation.Offset,
+                                       BlueLocation.Offset, AlphaLocation.Offset,
+                                       1, 1, 0,
+                                       Processor.BitsPerPixel, Processor.BigEndian);
+                
+                void *LastPixel = (u8 *)NewData + DataSize;
+                for(u32 *Pixel = (u32 *)NewData; Pixel < LastPixel; Pixel++)
+                {
+                    if(*Pixel == TransparentColor)
+                    {
+                        *Pixel &= 0xffffff;
+                    }
+                }
+            }
             
             Buffer = CreateFramebuffer(OpenGL, GL_RGBA, GL_UNSIGNED_INT_8_8_8_8_REV,
                                        Processor.Width, Processor.Height, NewData);
@@ -345,12 +361,13 @@ SetImageBuffer(open_gl *OpenGL, void *Data, image_processor_tasks Processor)
             void *NewData = RequestImageBuffer(DataSize);
             u32 *NewPalletData = ((u32 *)NewData) + ImageSize;
             
-            RearrangeChannelsU32ToU32(Processor.PalletData, NewPalletData,
-                                      (u32)Processor.RedMask,  (u32)Processor.GreenMask,
-                                      (u32)Processor.BlueMask, (u32)Processor.AlphaMask, 
-                                      RedLocation.Offset,  GreenLocation.Offset,
-                                      BlueLocation.Offset, AlphaLocation.Offset,
-                                      Processor.PalletSize, 1, BytesPerRow);
+            RearrangeChannelsToU32(Processor.PalletData, NewPalletData,
+                                   Processor.RedMask,  Processor.GreenMask,
+                                   Processor.BlueMask, Processor.AlphaMask, 
+                                   RedLocation.Offset,  GreenLocation.Offset,
+                                   BlueLocation.Offset, AlphaLocation.Offset,
+                                   Processor.PalletSize, 1, 0, 
+                                   Processor.BitsPerPalletColor, Processor.BigEndian);
             
             DereferenceColorIndex(Data, NewData, NewPalletData, Processor.PalletSize,
                                   Processor.Width, Processor.Height, BytesPerRow, Processor.BitsPerPixel);

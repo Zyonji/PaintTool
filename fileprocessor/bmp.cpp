@@ -316,8 +316,9 @@ BMP_DataDecoder(BMP_Win32BitmapHeader *BitmapHeader, void *FileEndpoint, void *B
     
     if(BitmapHeader->BitsPerPixel <= 8)
     {
-        Processor.PalletData = (u32 *)PaletteMemory;
-        Processor.PalletSize = PalletSize;
+        Processor.PalletData         = PaletteMemory;
+        Processor.PalletSize         = PalletSize;
+        Processor.BitsPerPalletColor = 32;
     }
     
     if(BitmapHeader->Compression == BMP_COMPRESSION_BITFIELDS || BitmapHeader->Compression == BMP_COMPRESSION_ALPHABITFIELDS)
@@ -381,9 +382,10 @@ BMP_DataDecoder(BMP_Win32BitmapHeader *BitmapHeader, void *FileEndpoint, void *B
         RLE8(BitmapData, FileEndpoint, PaletteMemory, PalletSize,
              BitmapBuffer, BitmapBufferEndpoint, BitmapHeader->Width);
         
-        Processor.BitsPerPixel = 32;
-        Processor.PalletData = 0;
-        Processor.PalletSize = 0;
+        Processor.BitsPerPixel       = 32;
+        Processor.PalletData         = 0;
+        Processor.PalletSize         = 0;
+        Processor.BitsPerPalletColor = 0;
         
         StoreImage(BitmapBuffer, Processor);
         FreeImageBuffer(BitmapBuffer);
@@ -404,9 +406,10 @@ BMP_DataDecoder(BMP_Win32BitmapHeader *BitmapHeader, void *FileEndpoint, void *B
         RLE4(BitmapData, FileEndpoint, PaletteMemory, PalletSize,
              BitmapBuffer, BitmapBufferEndpoint, BitmapHeader->Width);
         
-        Processor.BitsPerPixel = 32;
-        Processor.PalletData = 0;
-        Processor.PalletSize = 0;
+        Processor.BitsPerPixel       = 32;
+        Processor.PalletData         = 0;
+        Processor.PalletSize         = 0;
+        Processor.BitsPerPalletColor = 0;
         
         StoreImage(BitmapBuffer, Processor);
         FreeImageBuffer(BitmapBuffer);
