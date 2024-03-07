@@ -592,7 +592,7 @@ UndoFilters(u8 *Source, u8 *Target, u8 *RowBuffers,
 }
 
 b32
-PNG_DataDecoder(void *FileMemory, void *FileEndpoint)
+PNG_Reader(void *FileMemory, void *FileEndpoint)
 {
     png_file_header *Header = (png_file_header *)FileMemory;
     if(Header + 1 > FileEndpoint || Header->Signature != PNG_SIGNATURE || Header->TypeU32 != PNG_IHDR)
@@ -773,7 +773,10 @@ PNG_DataDecoder(void *FileMemory, void *FileEndpoint)
         sizeof(png_decoding_buffers) - 1 + DeflateBufferSize +
         RowBufferSize + PalletBufferSize;
     
+    
+    
     void *Buffer = RequestImageBuffer(CombinedBufferSize);
+    
     png_decoding_buffers *DeflateBuffers = (png_decoding_buffers *)((u8 *)Buffer + ImageBufferSize);
     u8* RowBuffers = 0;
     if(RowBufferSize)

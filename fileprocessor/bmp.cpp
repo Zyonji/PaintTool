@@ -251,7 +251,7 @@ RLE4(void *SourceData, void *DataEndpoint, void *PalletData, u32 PalletSize,
 }
 
 b32
-BMP_DataDecoder(BMP_CoreBitmapHeader *BitmapHeader, void *FileEndpoint, void *BitmapData)
+BMP_Reader(BMP_CoreBitmapHeader *BitmapHeader, void *FileEndpoint, void *BitmapData)
 {
     // TODO(Zyonji): Implement a decoder for the core bitmap format.
     LogError("The BMP file uses an unsupported core bitmap format.", "BMP Reader");
@@ -259,7 +259,7 @@ BMP_DataDecoder(BMP_CoreBitmapHeader *BitmapHeader, void *FileEndpoint, void *Bi
 }
 
 b32
-BMP_DataDecoder(BMP_Os2BitmapHeader *BitmapHeader, void *FileEndpoint, void *BitmapData)
+BMP_Reader(BMP_Os2BitmapHeader *BitmapHeader, void *FileEndpoint, void *BitmapData)
 {
     // TODO(Zyonji): Implement a decoder for the OS/2 specific format.
     LogError("The BMP file uses an unsupported OS/2 specific format.", "BMP Reader");
@@ -267,7 +267,7 @@ BMP_DataDecoder(BMP_Os2BitmapHeader *BitmapHeader, void *FileEndpoint, void *Bit
 }
 
 b32
-BMP_DataDecoder(BMP_Win32BitmapHeader *BitmapHeader, void *FileEndpoint, void *BitmapData)
+BMP_Reader(BMP_Win32BitmapHeader *BitmapHeader, void *FileEndpoint, void *BitmapData)
 {
     u8 *HeaderStart = (u8 *)BitmapHeader;
     if(HeaderStart + BitmapHeader->Size >= FileEndpoint)
@@ -431,7 +431,7 @@ BMP_DataDecoder(BMP_Win32BitmapHeader *BitmapHeader, void *FileEndpoint, void *B
 }
 
 b32
-BMP_DataDecoder(void *FileMemory, void *FileEndpoint)
+BMP_Reader(void *FileMemory, void *FileEndpoint)
 {
     BMP_FileHeader *FileHeader = (BMP_FileHeader *)FileMemory;
     if(FileHeader + 1 > FileEndpoint || FileHeader->Signature != BMP_SIGNATURE || FileHeader->Reserved != 0)
@@ -444,14 +444,14 @@ BMP_DataDecoder(void *FileMemory, void *FileEndpoint)
     
     if(FileHeader->BitmapHeaderSize == 12)
     {
-        return(BMP_DataDecoder((BMP_CoreBitmapHeader *)BitmapHeader, FileEndpoint, BitmapData));
+        return(BMP_Reader((BMP_CoreBitmapHeader *)BitmapHeader, FileEndpoint, BitmapData));
     }
     else if(FileHeader->BitmapHeaderSize == 16 || FileHeader->BitmapHeaderSize == 64)
     {
-        return(BMP_DataDecoder((BMP_Os2BitmapHeader *)BitmapHeader, FileEndpoint, BitmapData));
+        return(BMP_Reader((BMP_Os2BitmapHeader *)BitmapHeader, FileEndpoint, BitmapData));
     }
     else
     {
-        return(BMP_DataDecoder((BMP_Win32BitmapHeader *)BitmapHeader, FileEndpoint, BitmapData));
+        return(BMP_Reader((BMP_Win32BitmapHeader *)BitmapHeader, FileEndpoint, BitmapData));
     }
 }

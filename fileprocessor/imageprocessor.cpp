@@ -1,15 +1,19 @@
 b32 DisplayImageFromData(void*, void*);
 
 #include "png.cpp"
+#include "jpeg.cpp"
 #include "bmp.cpp"
 
 b32
 DisplayImageFromData(void *FileMemory, void *FileEndpoint)
 {
-    if(PNG_DataDecoder(FileMemory, FileEndpoint))
+    if(PNG_Reader(FileMemory, FileEndpoint))
         return(true);
     
-    if(BMP_DataDecoder(FileMemory, FileEndpoint))
+    if(JPEG_Reader(FileMemory, FileEndpoint))
+        return(true);
+    
+    if(BMP_Reader(FileMemory, FileEndpoint))
         return(true);
     
     return(false);
