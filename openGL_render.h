@@ -20,11 +20,18 @@ struct flip_texture_program
     GLuint OffsetID;
     GLuint StrideID;
 };
-struct index_texture_program
+struct DCT_program
 {
     render_program_base Common;
     
-    GLuint PixelPerByteID;
+    GLuint ChannelCountID;
+};
+struct stretch_channel_program
+{
+    render_program_base Common;
+    
+    GLuint SampleXID;
+    GLuint SampleYID;
 };
 
 struct frame_buffer
@@ -41,10 +48,12 @@ struct open_gl
     frame_buffer ImageBuffer;
     frame_buffer SwapBuffer;
     
-    render_program_base   PaintCheckerProgram;
-    render_program_base   PaintTextureProgram;
-    flip_texture_program  FlipTextureProgram;
-    index_texture_program IndexTextureProgram;
+    render_program_base     PaintCheckerProgram;
+    render_program_base     PaintTextureProgram;
+    render_program_base     YCbCrToRGBProgram;
+    flip_texture_program    FlipTextureProgram;
+    DCT_program             DCTProgram;
+    stretch_channel_program StretchChannelProgram;
 };
 
 struct channel_mask_map

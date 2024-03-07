@@ -22,6 +22,7 @@ void LogError(char*, char*);
 void* RequestImageBuffer(u64);
 void FreeImageBuffer(void*);
 void StoreImage(void*, image_processor_tasks);
+void OutputDebugNumber(s32 Number, u8 BitCount);
 
 #include "fileprocessor/imageprocessor.cpp"
 
@@ -44,6 +45,14 @@ LogError(char *Text, char *Caption)
     // TODO(Zyonji): Create a file to document errors for remote debugging.
     MessageBox(NULL, Text, Caption, MB_OK | MB_ICONHAND);
     Assert(false);
+}
+
+void
+OutputDebugNumber(s32 Number, u8 BitCount)
+{
+    char Buffer[256];
+    wsprintf(Buffer, "Number: %i | %i | %u\n", Number, (Number / 8 + 128),  BitCount);
+    OutputDebugStringA(Buffer);
 }
 
 static void
@@ -237,11 +246,17 @@ static void
 DisplayDroppedFile(HDROP DropHandle, HWND Window)
 {
     char FilePath[MAX_PATH];
-    DragQueryFileA(DropHandle, 0, FilePath, MAX_PATH);
-    DragFinish(DropHandle);
-    // TODO(Zyonji): Handle multiple files instead of just the first file.
+    u32 FileCount = DragQueryFileA(DropHandle, 0xffffffff, FilePath, MAX_PATH);
     
-    DisplayImageFromFile(FilePath, Window);
+    while(FileCount--)
+    {
+        DragQueryFileA(DropHandle, FileCount, FilePath, MAX_PATH);
+        // TODO(Zyonji): Handle multiple files instead of just the first file.
+        
+        DisplayImageFromFile(FilePath, Window);
+    }
+    
+    DragFinish(DropHandle);
 }
 
 static void
@@ -274,7 +289,7 @@ PasteClipboard(HWND Window)
             CopyMemory(DataMemory, DataPointer, DataSize);
             GlobalUnlock(DataPointer);
             
-            BMP_DataDecoder((BMP_Win32BitmapHeader *)DataMemory, (u8 *)DataMemory + DataSize, 0);
+            BMP_Reader((BMP_Win32BitmapHeader *)DataMemory, (u8 *)DataMemory + DataSize, 0);
             
             VirtualFree(DataMemory, 0, MEM_RELEASE);
             InvalidateRect(Window, 0, true);

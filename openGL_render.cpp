@@ -80,12 +80,41 @@ CompilePaintTextureProgram(open_gl *OpenGL, render_program_base *Result)
 }
 
 static GLuint
+CompileYCbCrToRGBProgram(open_gl *OpenGL, render_program_base *Result)
+{
+    GLuint Program = OpenGLCreateProgram(GlobalBasicShaderHeaderCode, YCbCrToRGB_VertexCode, YCbCrToRGB_FragmentCode, Result);
+    
+    return(Program);
+}
+
+static GLuint
 CompileFlipTextureProgram(open_gl *OpenGL, flip_texture_program *Result)
 {
     GLuint Program = OpenGLCreateProgram(GlobalBasicShaderHeaderCode, FlipTexture_VertexCode, FlipTexture_FragmentCode, &Result->Common);
     
     Result->OffsetID = glGetUniformLocation(Program, "Offset");
     Result->StrideID = glGetUniformLocation(Program, "Stride");
+    
+    return(Program);
+}
+
+static GLuint
+CompileDCTProgram(open_gl *OpenGL, DCT_program *Result)
+{
+    GLuint Program = OpenGLCreateProgram(GlobalBasicShaderHeaderCode, DCT_VertexCode, DCT_FragmentCode, &Result->Common);
+    
+    Result->ChannelCountID = glGetUniformLocation(Program, "ChannelCount");
+    
+    return(Program);
+}
+
+static GLuint
+CompileStretchChannelProgram(open_gl *OpenGL, stretch_channel_program *Result)
+{
+    GLuint Program = OpenGLCreateProgram(GlobalBasicShaderHeaderCode, StretchChannel_VertexCode, StretchChannel_FragmentCode, &Result->Common);
+    
+    Result->SampleXID = glGetUniformLocation(Program, "SampleX");
+    Result->SampleYID = glGetUniformLocation(Program, "SampleY");
     
     return(Program);
 }
@@ -121,9 +150,27 @@ OpenGLInitPrograms(open_gl *OpenGL)
         return(false);
     }
     
+    if(!CompileYCbCrToRGBProgram(OpenGL, &OpenGL->YCbCrToRGBProgram))
+    {
+        LogError("Unable to compile the YCbCr to RGB converting program.", "OpenGL");
+        return(false);
+    }
+    
     if(!CompileFlipTextureProgram(OpenGL, &OpenGL->FlipTextureProgram))
     {
         LogError("Unable to compile the paint texture program.", "OpenGL");
+        return(false);
+    }
+    
+    if(!CompileDCTProgram(OpenGL, &OpenGL->DCTProgram))
+    {
+        LogError("Unable to compile the DCT covnersion program.", "OpenGL");
+        return(false);
+    }
+    
+    if(!CompileStretchChannelProgram(OpenGL, &OpenGL->StretchChannelProgram))
+    {
+        LogError("Unable to compile the stretch channel program.", "OpenGL");
         return(false);
     }
     
@@ -181,6 +228,33 @@ OpenGLProgramEnd(flip_texture_program *Program)
     OpenGLProgramEnd(&Program->Common);
 }
 
+static void
+OpenGLProgramBegin(DCT_program *Program, u8 ChannelCount)
+{
+    OpenGLProgramBegin(&Program->Common);
+    
+    glUniform1i(Program->ChannelCountID, ChannelCount);
+}
+static void
+OpenGLProgramEnd(DCT_program *Program)
+{
+    OpenGLProgramEnd(&Program->Common);
+}
+
+static void
+OpenGLProgramBegin(stretch_channel_program *Program, u8 *Sample)
+{
+    OpenGLProgramBegin(&Program->Common);
+    
+    glUniform4i(Program->SampleXID, Sample[0], Sample[2], Sample[4], Sample[6]);
+    glUniform4i(Program->SampleYID, Sample[1], Sample[3], Sample[5], Sample[7]);
+}
+static void
+OpenGLProgramEnd(stretch_channel_program *Program)
+{
+    OpenGLProgramEnd(&Program->Common);
+}
+
 static GLuint
 GenerateImageTexture(open_gl *OpenGL, GLenum Format, GLenum Type, u32 Width, u32 Height, void *Data)
 {
@@ -188,8 +262,8 @@ GenerateImageTexture(open_gl *OpenGL, GLenum Format, GLenum Type, u32 Width, u32
     
     glGenTextures(1, &Result);
     glBindTexture(GL_TEXTURE_2D, Result);
-    // TODO(Zyonji): Check if GL_RGBA16 or GL_RGBA32F are more desireable internal formats.
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, Width, Height, 0, Format, Type, Data);
+    // TODO(Zyonji): GL_RGBA32F might be overkill. I currently use it to make the DCT transforms more convenient.
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, Width, Height, 0, Format, Type, Data);
     glGenerateMipmap(GL_TEXTURE_2D);
     
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_NEAREST);
@@ -241,145 +315,198 @@ SetImageBuffer(open_gl *OpenGL, void *Data, image_processor_tasks Processor)
     frame_buffer Buffer;
     frame_buffer SwapBuffer;
     
-    glViewport(0, 0, Processor.Width, Processor.Height);
-    
-    GLenum DataFormat = 0;
-    GLenum DataType = 0;
-    
+    glViewport(0, 0, Processor.Width,   Processor.Height);
     glPixelStorei(GL_UNPACK_SWAP_BYTES, Processor.BigEndian);
-    glPixelStorei(GL_UNPACK_ALIGNMENT, Processor.ByteAlignment);
-    if(Processor.BitsPerPixel >= 8 && Processor.TransparentColor == 0)
-    {
-        u32 BytesPerPixel = Processor.BitsPerPixel / 8;
-        for(u8 i = BYTE_COUNT_MAP[BytesPerPixel - 1]; i < BYTE_COUNT_MAP[BytesPerPixel]; i++)
-        {
-            if(Processor.RedMask   == CHANNEL_MASK_MAP[i].RedMask   &&
-               Processor.GreenMask == CHANNEL_MASK_MAP[i].GreenMask &&
-               Processor.BlueMask  == CHANNEL_MASK_MAP[i].BlueMask  &&
-               Processor.AlphaMask == CHANNEL_MASK_MAP[i].AlphaMask)
-            {
-                DataFormat = CHANNEL_MASK_MAP[i].DataFormat;
-                DataType = CHANNEL_MASK_MAP[i].DataType;
-                break;
-            }
-        }
-    }
+    glPixelStorei(GL_UNPACK_ALIGNMENT,   Processor.ByteAlignment);
     
-    if(DataType && Processor.PalletSize == 0)
+    if(Processor.DCTWidth > 0 && Processor.DCTHeight > 0)
     {
-        Buffer = CreateFramebuffer(OpenGL, DataFormat, DataType,
-                                   Processor.Width, Processor.Height, Data);
+        GLuint Texture = 0;
+        
+        glGenTextures(1, &Texture);
+        glBindTexture(GL_TEXTURE_2D, Texture);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F,
+                     Processor.DCTWidth, Processor.DCTHeight, 0, GL_RGBA, GL_FLOAT, Data);
+        glGenerateMipmap(GL_TEXTURE_2D);
+        
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        
+        
+        Buffer = CreateFramebuffer(OpenGL, GL_RGBA, GL_UNSIGNED_BYTE,
+                                   Processor.Width, Processor.Height, 0);
+        
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, Buffer.FramebufferHandle);
+        glBindTexture(GL_TEXTURE_2D, Texture);
+        
+        OpenGLProgramBegin(&OpenGL->DCTProgram, Processor.DCTChannelCount);
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+        OpenGLProgramEnd(&OpenGL->DCTProgram);
+        
+        glDeleteTextures(1, &Texture);
+        
+        glBindTexture(GL_TEXTURE_2D, Buffer.ColorHandle);
+        glGenerateMipmap(GL_TEXTURE_2D);
+        
+        // TODO(Zyonji): If subsampling was used, interpolate the stretched channels.
     }
     else
     {
-        if(Processor.BigEndian)
-        {
-            glPixelStorei(GL_UNPACK_SWAP_BYTES, false);
-            Processor.RedMask   = SwapEndian(Processor.RedMask);
-            Processor.GreenMask = SwapEndian(Processor.GreenMask);
-            Processor.BlueMask  = SwapEndian(Processor.BlueMask);
-            Processor.AlphaMask = SwapEndian(Processor.AlphaMask);
-        }
+        GLenum DataFormat = 0;
+        GLenum DataType = 0;
         
-        u32 MaximumChannelSize = 0;
-        channel_location RedLocation = GetChannelLocation(Processor.RedMask);
-        if(RedLocation.BitCount > MaximumChannelSize)
+        if(Processor.BitsPerPixel >= 8 && Processor.TransparentColor == 0)
         {
-            MaximumChannelSize = RedLocation.BitCount;
-        }
-        channel_location GreenLocation = GetChannelLocation(Processor.GreenMask);
-        if(GreenLocation.BitCount > MaximumChannelSize)
-        {
-            MaximumChannelSize = GreenLocation.BitCount;
-        }
-        channel_location BlueLocation = GetChannelLocation(Processor.BlueMask);
-        if(BlueLocation.BitCount > MaximumChannelSize)
-        {
-            MaximumChannelSize = BlueLocation.BitCount;
-        }
-        channel_location AlphaLocation = GetChannelLocation(Processor.AlphaMask);
-        if(AlphaLocation.BitCount > MaximumChannelSize)
-        {
-            MaximumChannelSize = AlphaLocation.BitCount;
-        }
-        
-#if 0
-        // TODO(Zyonji): Currently the textures are stored as 8 bit per channel, making higher precision superfluous. Reconsider after having settled on a texture storage format.
-        if(MaximumChannelSize > 8)
-            RearrangeChannelsToU64();
-        else
-            RearrangeChannelsToU32();
-#endif
-        
-        // Expects the byte alignment to be a power of 2.
-        u32 BitMask = Processor.ByteAlignment - 1;
-        u32 BytesPerRow = ((Processor.BitsPerPixel * Processor.Width + 7) / 8 + BitMask) & (~BitMask);
-        
-        if(Processor.PalletSize == 0)
-        {
-            u64 DataSize = Processor.Width * Processor.Height * 4;
-            void *NewData = RequestImageBuffer(DataSize);
-            
-            RearrangeChannelsToU32(Data, NewData,
-                                   Processor.RedMask,   Processor.GreenMask,
-                                   Processor.BlueMask,  Processor.AlphaMask, 
-                                   RedLocation.Offset,  GreenLocation.Offset,
-                                   BlueLocation.Offset, AlphaLocation.Offset,
-                                   Processor.Width, Processor.Height, BytesPerRow,
-                                   Processor.BitsPerPixel, Processor.BigEndian);
-            
-            if(Processor.TransparentColor)
+            u32 BytesPerPixel = Processor.BitsPerPixel / 8;
+            for(u8 i = BYTE_COUNT_MAP[BytesPerPixel - 1]; i < BYTE_COUNT_MAP[BytesPerPixel]; i++)
             {
-                u32 TransparentColor;
-                RearrangeChannelsToU32(&Processor.TransparentColor, &TransparentColor,
+                if(Processor.RedMask   == CHANNEL_MASK_MAP[i].RedMask   &&
+                   Processor.GreenMask == CHANNEL_MASK_MAP[i].GreenMask &&
+                   Processor.BlueMask  == CHANNEL_MASK_MAP[i].BlueMask  &&
+                   Processor.AlphaMask == CHANNEL_MASK_MAP[i].AlphaMask)
+                {
+                    DataFormat = CHANNEL_MASK_MAP[i].DataFormat;
+                    DataType = CHANNEL_MASK_MAP[i].DataType;
+                    break;
+                }
+            }
+        }
+        
+        if(DataType && Processor.PalletSize == 0)
+        {
+            Buffer = CreateFramebuffer(OpenGL, DataFormat, DataType,
+                                       Processor.Width, Processor.Height, Data);
+        }
+        else
+        {
+            if(Processor.BigEndian)
+            {
+                glPixelStorei(GL_UNPACK_SWAP_BYTES, false);
+                Processor.RedMask   = SwapEndian(Processor.RedMask);
+                Processor.GreenMask = SwapEndian(Processor.GreenMask);
+                Processor.BlueMask  = SwapEndian(Processor.BlueMask);
+                Processor.AlphaMask = SwapEndian(Processor.AlphaMask);
+            }
+            
+            u32 MaximumChannelSize = 0;
+            channel_location RedLocation = GetChannelLocation(Processor.RedMask);
+            if(RedLocation.BitCount > MaximumChannelSize)
+            {
+                MaximumChannelSize = RedLocation.BitCount;
+            }
+            channel_location GreenLocation = GetChannelLocation(Processor.GreenMask);
+            if(GreenLocation.BitCount > MaximumChannelSize)
+            {
+                MaximumChannelSize = GreenLocation.BitCount;
+            }
+            channel_location BlueLocation = GetChannelLocation(Processor.BlueMask);
+            if(BlueLocation.BitCount > MaximumChannelSize)
+            {
+                MaximumChannelSize = BlueLocation.BitCount;
+            }
+            channel_location AlphaLocation = GetChannelLocation(Processor.AlphaMask);
+            if(AlphaLocation.BitCount > MaximumChannelSize)
+            {
+                MaximumChannelSize = AlphaLocation.BitCount;
+            }
+            
+#if 0
+            // TODO(Zyonji): Currently the textures are stored as 8 bit per channel, making higher precision superfluous. Reconsider after having settled on a texture storage format.
+            if(MaximumChannelSize > 8)
+                RearrangeChannelsToU64();
+            else
+                RearrangeChannelsToU32();
+#endif
+            
+            // Expects the byte alignment to be a power of 2.
+            u32 BitMask = Processor.ByteAlignment - 1;
+            u32 BytesPerRow = ((Processor.BitsPerPixel * Processor.Width + 7) / 8 + BitMask) & (~BitMask);
+            
+            if(Processor.PalletSize == 0)
+            {
+                u64 DataSize = Processor.Width * Processor.Height * 4;
+                void *NewData = RequestImageBuffer(DataSize);
+                
+                RearrangeChannelsToU32(Data, NewData,
                                        Processor.RedMask,   Processor.GreenMask,
                                        Processor.BlueMask,  Processor.AlphaMask, 
                                        RedLocation.Offset,  GreenLocation.Offset,
                                        BlueLocation.Offset, AlphaLocation.Offset,
-                                       1, 1, 0,
+                                       Processor.Width, Processor.Height, BytesPerRow,
                                        Processor.BitsPerPixel, Processor.BigEndian);
                 
-                void *LastPixel = (u8 *)NewData + DataSize;
-                for(u32 *Pixel = (u32 *)NewData; Pixel < LastPixel; Pixel++)
+                if(Processor.TransparentColor)
                 {
-                    if(*Pixel == TransparentColor)
+                    u32 TransparentColor;
+                    RearrangeChannelsToU32(&Processor.TransparentColor, &TransparentColor,
+                                           Processor.RedMask,   Processor.GreenMask,
+                                           Processor.BlueMask,  Processor.AlphaMask, 
+                                           RedLocation.Offset,  GreenLocation.Offset,
+                                           BlueLocation.Offset, AlphaLocation.Offset,
+                                           1, 1, 0,
+                                           Processor.BitsPerPixel, Processor.BigEndian);
+                    
+                    void *LastPixel = (u8 *)NewData + DataSize;
+                    for(u32 *Pixel = (u32 *)NewData; Pixel < LastPixel; Pixel++)
                     {
-                        *Pixel &= 0xffffff;
+                        if(*Pixel == TransparentColor)
+                        {
+                            *Pixel &= 0xffffff;
+                        }
                     }
                 }
+                
+                Buffer = CreateFramebuffer(OpenGL, GL_RGBA, GL_UNSIGNED_INT_8_8_8_8_REV,
+                                           Processor.Width, Processor.Height, NewData);
+                
+                FreeImageBuffer(NewData);
             }
-            
-            Buffer = CreateFramebuffer(OpenGL, GL_RGBA, GL_UNSIGNED_INT_8_8_8_8_REV,
-                                       Processor.Width, Processor.Height, NewData);
-            
-            FreeImageBuffer(NewData);
-        }
-        else
-        {
-            u64 ImageSize = Processor.Width * Processor.Height;
-            u64 DataSize = ImageSize * 4 + Processor.PalletSize * 4;
-            void *NewData = RequestImageBuffer(DataSize);
-            u32 *NewPalletData = ((u32 *)NewData) + ImageSize;
-            
-            RearrangeChannelsToU32(Processor.PalletData, NewPalletData,
-                                   Processor.RedMask,  Processor.GreenMask,
-                                   Processor.BlueMask, Processor.AlphaMask, 
-                                   RedLocation.Offset,  GreenLocation.Offset,
-                                   BlueLocation.Offset, AlphaLocation.Offset,
-                                   Processor.PalletSize, 1, 0, 
-                                   Processor.BitsPerPalletColor, Processor.BigEndian);
-            
-            DereferenceColorIndex(Data, NewData, NewPalletData, Processor.PalletSize,
-                                  Processor.Width, Processor.Height, BytesPerRow, Processor.BitsPerPixel);
-            
-            Buffer = CreateFramebuffer(OpenGL, GL_RGBA, GL_UNSIGNED_INT_8_8_8_8_REV,
-                                       Processor.Width, Processor.Height, NewData);
-            
-            FreeImageBuffer(NewData);
+            else
+            {
+                u64 ImageSize = Processor.Width * Processor.Height;
+                u64 DataSize = ImageSize * 4 + Processor.PalletSize * 4;
+                void *NewData = RequestImageBuffer(DataSize);
+                u32 *NewPalletData = ((u32 *)NewData) + ImageSize;
+                
+                RearrangeChannelsToU32(Processor.PalletData, NewPalletData,
+                                       Processor.RedMask,  Processor.GreenMask,
+                                       Processor.BlueMask, Processor.AlphaMask, 
+                                       RedLocation.Offset,  GreenLocation.Offset,
+                                       BlueLocation.Offset, AlphaLocation.Offset,
+                                       Processor.PalletSize, 1, 0, 
+                                       Processor.BitsPerPalletColor, Processor.BigEndian);
+                
+                DereferenceColorIndex(Data, NewData, NewPalletData, Processor.PalletSize,
+                                      Processor.Width, Processor.Height, BytesPerRow, Processor.BitsPerPixel);
+                
+                Buffer = CreateFramebuffer(OpenGL, GL_RGBA, GL_UNSIGNED_INT_8_8_8_8_REV,
+                                           Processor.Width, Processor.Height, NewData);
+                
+                FreeImageBuffer(NewData);
+            }
         }
     }
     
-    SwapBuffer = CreateFramebuffer(OpenGL, GL_BGRA, GL_UNSIGNED_BYTE, Processor.Width, Processor.Height, 0);
+    SwapBuffer = CreateFramebuffer(OpenGL, GL_RGBA, GL_UNSIGNED_BYTE, Processor.Width, Processor.Height, 0);
+    
+    if(Processor.ChannelStretchFactors[0][0] > 0 && Processor.ChannelStretchFactors[0][1] > 0)
+    {
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, SwapBuffer.FramebufferHandle);
+        glBindTexture(GL_TEXTURE_2D, Buffer.ColorHandle);
+        
+        OpenGLProgramBegin(&OpenGL->StretchChannelProgram, (u8 *)&Processor.ChannelStretchFactors);
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+        OpenGLProgramEnd(&OpenGL->StretchChannelProgram);
+        
+        glBindTexture(GL_TEXTURE_2D, SwapBuffer.ColorHandle);
+        glGenerateMipmap(GL_TEXTURE_2D);
+        
+        frame_buffer TempBuffer = Buffer;
+        Buffer = SwapBuffer;
+        SwapBuffer = TempBuffer;
+    }
     
     if(Processor.FlippedX || Processor.FlippedY)
     {
@@ -413,6 +540,24 @@ SetImageBuffer(open_gl *OpenGL, void *Data, image_processor_tasks Processor)
         Buffer = SwapBuffer;
         SwapBuffer = TempBuffer;
     }
+    
+    if(Processor.ColorSpace == COLOR_SPACE_YCbCr)
+    {
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, SwapBuffer.FramebufferHandle);
+        glBindTexture(GL_TEXTURE_2D, Buffer.ColorHandle);
+        
+        OpenGLProgramBegin(&OpenGL->YCbCrToRGBProgram);
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+        OpenGLProgramEnd(&OpenGL->YCbCrToRGBProgram);
+        
+        glBindTexture(GL_TEXTURE_2D, SwapBuffer.ColorHandle);
+        glGenerateMipmap(GL_TEXTURE_2D);
+        
+        frame_buffer TempBuffer = Buffer;
+        Buffer = SwapBuffer;
+        SwapBuffer = TempBuffer;
+    }
+    
     
     glBindTexture(GL_TEXTURE_2D, 0);
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);

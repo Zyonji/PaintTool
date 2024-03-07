@@ -18,11 +18,14 @@
 #define WGL_CONTEXT_FORWARD_COMPATIBLE_BIT_ARB  0x0002
 #define WGL_CONTEXT_CORE_PROFILE_BIT_ARB        0x00000001
 
+#define GL_RGBA32F                              0x8814
+
 #define GL_BGR                                  0x80E0
 #define GL_BGRA                                 0x80E1
 #define GL_CLAMP_TO_EDGE                        0x812F
 #define GL_RG                                   0x8227
 #define GL_R8                                   0x8229
+#define GL_RGBA_INTEGER                         0x8D99
 
 #define GL_UNSIGNED_BYTE_3_3_2                  0x8032
 #define GL_UNSIGNED_BYTE_2_3_3_REV              0x8362
@@ -74,6 +77,7 @@ typedef void WINAPI type_glVertexAttribPointer(GLuint index, GLint size, GLenum 
 typedef GLint WINAPI type_glGetUniformLocation(GLuint program, const GLchar *name);
 typedef void WINAPI type_glUniform1i(GLint location, GLint v0);
 typedef void WINAPI type_glUniform2i(GLint location, GLint v0, GLint v1);
+typedef void WINAPI type_glUniform4i(GLint location, GLint v0, GLint v1, GLint v2, GLint v3);
 typedef void WINAPI type_glUniform1ui(GLint location, GLuint v0);
 typedef void WINAPI type_glUniform4uiv(GLint location, GLsizei count, const GLuint *value);
 
@@ -117,6 +121,7 @@ OpenGLGlobalFunction(glVertexAttribPointer);
 OpenGLGlobalFunction(glGetUniformLocation);
 OpenGLGlobalFunction(glUniform1i);
 OpenGLGlobalFunction(glUniform2i);
+OpenGLGlobalFunction(glUniform4i);
 OpenGLGlobalFunction(glUniform1ui);
 OpenGLGlobalFunction(glUniform4uiv);
 
@@ -162,6 +167,7 @@ LoadOpenGLFunctions()
     WGLGetOpenGLFunction(glGetUniformLocation);
     WGLGetOpenGLFunction(glUniform1i);
     WGLGetOpenGLFunction(glUniform2i);
+    WGLGetOpenGLFunction(glUniform4i);
     WGLGetOpenGLFunction(glUniform1ui);
     WGLGetOpenGLFunction(glUniform4uiv);
     
