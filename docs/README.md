@@ -36,9 +36,9 @@ In this section I create a generic window, which accepts files through drag and 
 Once the image data is in RAM, we'll test if it's one of the image formats we know one by one. Here it's important to not just rely on the suffix of the file name; it's not uncommon to find a `JFIF` file with the suffix `.png`. The decoding shall happen in two steps. First a file format specific step that returns a data structure and memory for an image. And then a universal step converts that data into a texture in our desired color space.
 
 We'll start with the following formats and add more when needed:
-- [Bitmap Code](/docs/Bitmap.md) (`.bmp`)
-- [Portable Network Graphics Code](/docs/PNG.md) (`.png`)
-- JPEG File Interchange Format Code (`.jpg`)
-- WebP Code (`.webp`)
+- [`.bmp` Decoder](/docs/Bitmap.md)
+- [`.png` Decoder](/docs/PNG.md)
+- [`.jpg` Decoder](/docs/JPEG.md)
+- `.webp` Decoder
 
 In each section we prepare the data to be processed by a [General Image Decoder](/docs/GeneralImageDecoder.md).

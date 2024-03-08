@@ -112,3 +112,133 @@ while(LinesRemaining--)
 }
 ```
 Make sure you set the alpha channel to the maximum value, if no alpha mask is present. Otherwise your texture will become invisible when it shouldn't.
+
+# General DCT Decoder
+The [Discrete Cosine Transform](https://en.wikipedia.org/wiki/Discrete_cosine_transform) is a way to represent raster images, used by JPEG and WebP. JPEG uses 8 by 8 blocks of wave magnitudes to represent image data (defined in [A.3.3](https://www.w3.org/Graphics/JPEG/itu-t81.pdf)). OpenGL doesn't support a native function to read images represented in that format, however, the independent blocks make conversion through a shader easy. If the wave magnitudes are stored as floating point numbers, then they can be loaded as a floating point texture that's not clamped to the 0 to 1 scope.
+```cpp
+glGenTextures(1, &Texture);
+glBindTexture(GL_TEXTURE_2D, Texture);
+glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, DCTWidth, DCTHeight, 0, GL_RGBA, GL_FLOAT, Data);
+```
+Each magnitude is multiplied by the sum of the 16 products cosine waves in either direction within the block. The cosine wave for one dimension in one block coordinate is different, depending on if the coordinate within the block in that dimension is 0 or not. Each wave is multiplied by `sqrt(1/8)` at 0 and `sqrt(1/4)` otherwise. The cosine curve is defined as `cos((2x + 1)uπ/16)`. In the fragment shader, the `gl_FragCoord` is the center of a pixel, meaning a whole number plus `0.5`. Because of that, pixel 0 is `x = 0.5` instead. The `0.5 * 2` is equal to the `+ 1` in the definition. That gives us the simplified curve `cos(FragCoord * uπ/8)`. Written out as a shader, it looks like this:
+```glsl
+#define M_PI 3.1415926535897932384626433832795
+
+uniform sampler2D Image;
+
+out vec4 FragmentColor;
+
+void main(void)
+{
+    ivec2 Target = ivec2(gl_FragCoord.xy) / 8 * 8;
+    
+    vec4 Color = vec4(0.0);
+    vec4 OffsetX = mod(vec4(gl_FragCoord.x), 8.0);
+    vec4 OffsetY = mod(vec4(gl_FragCoord.y), 8.0);
+    vec4 ScalarX, ScalarY;
+    
+    for(int y = 0; y < 8; y++)
+    {
+        for(int x = 0; x < 8; x++)
+        {
+            vec4 Texel;
+            Texel = texelFetch(Image, Target + ivec2(x, y), 0);
+            ScalarX = sqrt((clamp(x, 0.0, 1.0) + 1.0) / 8.0) * cos(x * M_PI * OffsetX / 8.0);
+            ScalarY = sqrt((clamp(y, 0.0, 1.0) + 1.0) / 8.0) * cos(y * M_PI * OffsetY / 8.0);
+            Color += ScalarX * ScalarY * Texel;
+        }
+    }
+    
+    FragmentColor = Color;
+}
+```
+Converting the coordinates to an integer vector and dividing and multiplying it by 8 aligns the coordinate to the block corner. 
+
+# Color Channel Mapping
+A JPEG file may have the different color channels at different sizes. In that case, a shader can simply sample the desired color by dividing the coordinate by the size difference between the channels. However, to avoid aliasing, the adjusted channel color should be interpolated with adjacent pixel colors depending on the pixel center position in the scaled up image. This can be achieved by using the fractional part of the virtual pixel position in a mixing function call. That means, for every channel, four color values need to be interpolated:
+```glsl
+uniform sampler2D Image;
+uniform ivec4 SampleX;
+uniform ivec4 SampleY;
+
+out vec4 FragmentColor;
+
+void main(void)
+{
+    vec2 PixelCenter = gl_FragCoord.xy;
+    
+    vec4 OffsetX = vec4(PixelCenter.x) / SampleX - vec4(0.5);
+    vec4 OffsetY = vec4(PixelCenter.y) / SampleY - vec4(0.5);
+    
+    vec2 TargetR = vec2(OffsetX.r, OffsetY.r);
+    vec2 TargetG = vec2(OffsetX.g, OffsetY.g);
+    vec2 TargetB = vec2(OffsetX.b, OffsetY.b);
+    vec2 TargetA = vec2(OffsetX.a, OffsetY.a);
+    
+    OffsetX = fract(OffsetX);
+    OffsetY = fract(OffsetY);
+    
+    vec4 Texel00;
+    Texel00.r = texelFetch(Image, ivec2(TargetR), 0).r;
+    Texel00.g = texelFetch(Image, ivec2(TargetG), 0).g;
+    Texel00.b = texelFetch(Image, ivec2(TargetB), 0).b;
+    Texel00.a = texelFetch(Image, ivec2(TargetA), 0).a;
+    
+    vec4 Texel01;
+    Texel01.r = texelFetch(Image, ivec2(TargetR + vec2(0, 1)), 0).r;
+    Texel01.g = texelFetch(Image, ivec2(TargetG + vec2(0, 1)), 0).g;
+    Texel01.b = texelFetch(Image, ivec2(TargetB + vec2(0, 1)), 0).b;
+    Texel01.a = texelFetch(Image, ivec2(TargetA + vec2(0, 1)), 0).a;
+    
+    vec4 Texel10;
+    Texel10.r = texelFetch(Image, ivec2(TargetR + vec2(1, 0)), 0).r;
+    Texel10.g = texelFetch(Image, ivec2(TargetG + vec2(1, 0)), 0).g;
+    Texel10.b = texelFetch(Image, ivec2(TargetB + vec2(1, 0)), 0).b;
+    Texel10.a = texelFetch(Image, ivec2(TargetA + vec2(1, 0)), 0).a;
+    
+    vec4 Texel11;
+    Texel11.r = texelFetch(Image, ivec2(TargetR + vec2(1, 1)), 0).r;
+    Texel11.g = texelFetch(Image, ivec2(TargetG + vec2(1, 1)), 0).g;
+    Texel11.b = texelFetch(Image, ivec2(TargetB + vec2(1, 1)), 0).b;
+    Texel11.a = texelFetch(Image, ivec2(TargetA + vec2(1, 1)), 0).a;
+    
+    vec4 Color = mix(mix(Texel00, Texel01, OffsetY), mix(Texel10, Texel11, OffsetY), OffsetX);
+    
+    if(SampleX.r * SampleY.r == 0)
+        Color.r = 0.0;
+    if(SampleX.g * SampleY.g == 0)
+        Color.g = 0.0;
+    if(SampleX.b * SampleY.b == 0)
+        Color.b = 0.0;
+    if(SampleX.a * SampleY.a == 0)
+        Color.a = 1.0;
+    
+    FragmentColor = Color;
+}
+```
+Because it is possible that the coordinates might be divided by 0, leading to undefined outcomes, we set the channels to default values if division by 0 happened.
+
+# Known Color Space Conversion
+If the image read is in a specific color space, then we can handle color conversion with less effort than if the color space is described with parameters. For example, if the image is using sRGB, then no conversion is required. Here it's important to note that sRGB is not always used the same. In OpenGL it's often used to describe linear RGB, where channel values are relative to luminance. When talking about color spaces, sRGB specifies a standardized color gamut.
+
+## YCbCr
+A JPEG file is most commonly containing data in the [YCbCr Color Space](https://en.wikipedia.org/wiki/YCbCr). To convert from this color space to RGB, we multiply the color vector with the inverse color matrix mentioned on the wiki page, with `KR = 0.299`, `KG =  0.587` and `KB = 0.114`. This gives us the following simple conversion shader:
+
+```glsl
+uniform sampler2D Image;
+
+out vec4 FragmentColor;
+
+void main(void)
+{
+    vec4 Texel = texelFetch(Image, ivec2(gl_FragCoord.xy), 0);
+    
+    vec3 Color;
+    Color.r = Texel.z * (2.0 - 2.0 * 0.299) + Texel.x;
+    Color.b = Texel.y * (2.0 - 2.0 * 0.114) + Texel.x;
+    Color.g = (Texel.x - 0.114 * Color.b - 0.299 * Color.r) / 0.587;
+    Color = (Color + 128.0) / 255.0;
+    
+    FragmentColor = vec4(Color, Texel.a);
+}
+```
